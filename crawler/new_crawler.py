@@ -28,16 +28,16 @@ def get_proxy(prx):
 
 def url_get(content, q):
     html = Soup(content, 'html.parser')
-    # temp_dict = {}
-    # for i in Counter(html.findAll(text=True)):
-    #     temp_dict.update({i: Counter(html.findAll(text=True)).get(i)})
+    temp_dict = {}
+    for i in Counter(html.findAll(text=True)):
+        temp_dict.update({i: Counter(html.findAll(text=True)).get(i)})
+    print temp_dict
     for tag in html.find_all('a'):
         if tag.get('href') is None:
             continue
         if tag.get('href') and tag.get('href').startswith('http'):
             # logging.info('Found {0}'.format(tag.get('href')))
             q.put(tag.get('href'))
-            print q.qsize()
             urlLogger.info(tag.get('href'))
 
 
@@ -73,12 +73,9 @@ def process_url(q, prx):
     while True:
         my_url = q.get(True)
         # Read the URL content
-        print my_url
         text = open_url(my_url, prx)
         if text:
             url_get(text, q)
-        else:
-            print 'None'
 
 
 if __name__ == '__main__':
@@ -94,4 +91,6 @@ if __name__ == '__main__':
     for url in args.url_start:
         queue.put(url)
 
-    time.sleep(999999)
+    time.sleep(11)
+    while queue.qsize() != 0:
+        time.sleep(3)

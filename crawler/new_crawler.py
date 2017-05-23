@@ -1,103 +1,97 @@
-import logging # For debugging purposes only
-import psutil
-import subprocess
+# todo: add text indexing
+# todo: consider checking if a url already exists in the queue.
+
+import os
+from collections import Counter
+from multiprocessing import Queue, Pool
+import loggers
 import requests
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 import argparse
 import time
 from bs4 import BeautifulSoup as Soup
 
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s\t|\t%(levelname)s\t|%(message)s')
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+logger = loggers.Loggers('sysLogger', 'urlLogger')
+urlLogger = logger.get_urllogger()
+sysLogger = logger.get_syslogger()
 
 
-def save_url(url_found):
-    with open(args.url_log, 'r') as g:
-        urls = g.readlines()
-
-    if url_found not in urls and url_found.startswith('http://'):
-        with open(args.url_log, 'a') as g:
-            g.write('{0}\n'.format(url_found))
-
-
-def processes_get():
-    process_counter = 0
-    for p in psutil.process_iter():
-        if 'python.exe' == p.name():
-            process_counter += 1
-    return process_counter
+def get_proxy(prx):
+    if prx and prx.startswith('http://'):
+        return {'http': args.proxy}
+    elif prx and prx.startswith('https://'):
+        return {'https': args.proxy}
+    else:
+        return False
 
 
-def url_get(content):
-    # for line in content.split('\n'):
-    #     if 'http' in line:
-    #         URL_LIST.append('' + line.split('http')[0])
+def url_get(content, q):
     html = Soup(content, 'html.parser')
-    # print([a['href'] for a in html.find_all('a')])
-    for link in html.find_all('a'):
-        if link.get('href') is None:
+    # temp_dict = {}
+    # for i in Counter(html.findAll(text=True)):
+    #     temp_dict.update({i: Counter(html.findAll(text=True)).get(i)})
+    for tag in html.find_all('a'):
+        if tag.get('href') is None:
             continue
-        if link.get('href').startswith('http'):
-            #todo:    if link.get('href').startswith('http'):
-            #todo:      AttributeError: 'NoneType' object has no attribute 'startswith'
-            url_list.append(link.get('href'))
+        if tag.get('href') and tag.get('href').startswith('http'):
+            # logging.info('Found {0}'.format(tag.get('href')))
+            q.put(tag.get('href'))
+            print q.qsize()
+            urlLogger.info(tag.get('href'))
 
 
-def open_url(url):
-    r = requests.get(url=url)
-    if r.status_code/100 == 2:
-        return r.text
+def open_url(scan_url, prx):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) '
+                                 'Chrome/58.0.3029.110 Safari/537.36'}
+        if prx:
+            r = requests.get(url=scan_url, verify=False, proxies=prx, headers=headers)
+        else:
+            r = requests.get(url=scan_url, verify=False, headers=headers)
+
+        if r.status_code / 100 == 2:
+            return r.text.encode('utf-8')
+
+    except Exception, e:
+        sysLogger.exception('Exception for url: {0}'.format(scan_url))
+        print e.message
     return None
-
-
-def url_check_exists(url, url_log_path):
-    with open(url_log_path, 'r') as f:
-        file_content = f.readlines()
-    if url in file_content:
-        return True
-    return False
 
 
 def process_args():
     parser = argparse.ArgumentParser(description='This is a simple crawler')
-    parser.add_argument('--url_start')
-    parser.add_argument('--url_log')
-    parser.add_argument('--max_crawlers')
+    parser.add_argument('--url_start', nargs='+', required=True)
+    parser.add_argument('--url_log', required=True)
+    parser.add_argument('--max_crawlers', required=True, type=int)
+    parser.add_argument('--proxy')
     return parser.parse_args()
 
 
-def crawler_check_number(current=0):
-    # Make sure crawlers don't spawn out of hand
-    if int(args.max_crawlers) - (processes_get() + current) <= 0:
-        # time.sleep(2)
-        exit()
+def process_url(q, prx):
+    sysLogger.info('Worker {0} is started.'.format(os.getpid()))
+    while True:
+        my_url = q.get(True)
+        # Read the URL content
+        print my_url
+        text = open_url(my_url, prx)
+        if text:
+            url_get(text, q)
+        else:
+            print 'None'
+
 
 if __name__ == '__main__':
+    sysLogger.info('Starting father spider')
+
     # define vars
-    spawn_time = time.time()
-
-    url_list = []
-    crawler_counter = 0
-    logging.info("Starting crawler")
     args = process_args()
-    crawler_check_number(1)
+    proxy = get_proxy(args.proxy)
+    queue = Queue()
+    sysLogger.debug('Starting process pool')
+    pool = Pool(args.max_crawlers, process_url, (queue, proxy))
+    sysLogger.debug('Creating queue')
+    for url in args.url_start:
+        queue.put(url)
 
-    # Check if it's a new URL
-    logging.info('Checking number of processes')
-    if url_check_exists(args.url_start, args.url_log):
-        exit()
-    logging.info('Opening link')
-    # Get the website's response
-    web_content = open_url(args.url_start)
-    if not web_content:
-        exit()
-    logging.info("Parsing web content")
-    url_get(web_content)
-    # todo: Index text should go here
-    # Spawn other crawlers for found URLs
-    for url in url_list:
-        save_url(url)
-
-        crawler_check_number(1)
-        subprocess.Popen(['python', 'new_crawler.py', '--url_start', url, '--url_log', args.url_log,
-                          '--max_crawlers', args.max_crawlers])
-
-    print('Finished after: {0}'.format(time.time() - spawn_time))
+    time.sleep(999999)
